@@ -80,20 +80,23 @@ func TestDefaultLogin(t *testing.T) {
 	}
 }
 
+// defaultGCConfig is the worker GC section always appended to auto-generated buildkit configs.
+const defaultGCConfig = "\n[worker]\n[worker.oci]\ngc = true\ngckeepstorage = 1000\n\n[[worker.oci.gcpolicy]]\nkeepBytes = 536870912\nkeepDuration = 7200\n"
+
 func TestWriteBuildkitConfig(t *testing.T) {
 	settings := defaultTestSettings
 	assert.NoError(t, newSettingsOnly(&settings).Validate())
-	assert.EqualValues(t, "", settings.Daemon.BuildkitConfig)
+	assert.EqualValues(t, defaultGCConfig[1:], settings.Daemon.BuildkitConfig) // no leading newline when GC is the only section
 
 	settings = defaultTestSettings
 	settings.Daemon.BuildkitDebug = true
 	assert.NoError(t, newSettingsOnly(&settings).Validate())
-	assert.EqualValues(t, "debug = true\n", settings.Daemon.BuildkitConfig)
+	assert.EqualValues(t, "debug = true\n"+defaultGCConfig, settings.Daemon.BuildkitConfig)
 
 	settings = defaultTestSettings
 	settings.Daemon.Mirror = "mirror.example.com"
 	assert.NoError(t, newSettingsOnly(&settings).Validate())
-	assert.EqualValues(t, "[registry]\n[registry.'docker.io']\nmirrors = ['mirror.example.com']\n", settings.Daemon.BuildkitConfig)
+	assert.EqualValues(t, "[registry]\n[registry.'docker.io']\nmirrors = ['mirror.example.com']\n"+defaultGCConfig, settings.Daemon.BuildkitConfig)
 
 	settings = defaultTestSettings
 	settings.DefaultLogin.Registry = "codeberg.org"
@@ -107,5 +110,5 @@ func TestWriteBuildkitConfig(t *testing.T) {
 	assert.NoError(t, caFile.Close())
 
 	assert.NoError(t, newSettingsOnly(&settings).Validate())
-	assert.EqualValues(t, fmt.Sprintf("[registry]\n[registry.'codeberg.org']\nca = ['%s/codeberg.org/ca.crt']\n", tmpDir), settings.Daemon.BuildkitConfig)
+	assert.EqualValues(t, fmt.Sprintf("[registry]\n[registry.'codeberg.org']\nca = ['%s/codeberg.org/ca.crt']\n"+defaultGCConfig, tmpDir), settings.Daemon.BuildkitConfig)
 }

@@ -1,8 +1,10 @@
 package plugin
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -238,6 +240,22 @@ func (p *Plugin) sanitizedUserTags() []string {
 type BuildkitConfigTOML struct {
 	Debug    bool                     `toml:"debug,omitempty"` // needs to be public for toml lib to use
 	Registry map[string]*RegistryInfo `toml:"registry,omitempty"`
+	Worker   *BuildkitWorkerConfig    `toml:"worker,omitempty"`
+}
+
+type BuildkitWorkerConfig struct {
+	OCI *BuildkitWorkerOCI `toml:"oci,omitempty"`
+}
+
+type BuildkitWorkerOCI struct {
+	GC            bool              `toml:"gc"`
+	GCKeepStorage int               `toml:"gckeepstorage,omitempty"` // MB
+	GCPolicy      []BuildkitGCEntry `toml:"gcpolicy,omitempty"`
+}
+
+type BuildkitGCEntry struct {
+	KeepBytes    int64 `toml:"keepBytes,omitempty"`
+	KeepDuration int64 `toml:"keepDuration,omitempty"` // seconds
 }
 
 type RegistryInfo struct {
@@ -251,6 +269,19 @@ func (p *Plugin) generateBuildkitConfig() error {
 
 		cfg := BuildkitConfigTOML{}
 		cfg.Registry = make(map[string]*RegistryInfo)
+
+		// Enable GC by default so abandoned builders don't accumulate unbounded cache.
+		// Each builder is ephemeral (created per job, never reused), so 1GB local cache
+		// is plenty; real cross-job caching should use cache_from/cache_to with a registry.
+		cfg.Worker = &BuildkitWorkerConfig{
+			OCI: &BuildkitWorkerOCI{
+				GC:            true,
+				GCKeepStorage: 1000, // MB
+				GCPolicy: []BuildkitGCEntry{
+					{KeepBytes: 512 * 1024 * 1024, KeepDuration: 7200}, // 512 MiB / 2 h
+				},
+			},
+		}
 
 		if p.settings.Daemon.BuildkitDebug {
 			cfg.Debug = p.settings.Daemon.BuildkitDebug
@@ -298,7 +329,7 @@ func (p *Plugin) generateBuildkitConfig() error {
 			}
 		}
 
-		if cfg.Debug || len(cfg.Registry) > 0 {
+		if cfg.Debug || len(cfg.Registry) > 0 || cfg.Worker != nil {
 			tomlData, err := toml.Marshal(cfg)
 			if err != nil {
 				return fmt.Errorf("error marshaling buildkit.toml: %s", err)
@@ -384,10 +415,28 @@ func (p *Plugin) Execute() error {
 	// add proxy build args
 	addProxyBuildArgs(&p.settings.Build)
 
+	// Run version/info first.
+	for _, cmd := range []*exec.Cmd{commandVersion(), commandInfo()} {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		trace(cmd)
+		if err := cmd.Run(); err != nil {
+			return err
+		}
+	}
+
+	// Create the buildx builder and capture its name so we can remove it afterwards.
+	builderCmd := commandBuilder(p.settings.Daemon)
+	var builderOut bytes.Buffer
+	builderCmd.Stdout = io.MultiWriter(os.Stdout, &builderOut)
+	builderCmd.Stderr = os.Stderr
+	trace(builderCmd)
+	if err := builderCmd.Run(); err != nil {
+		return err
+	}
+	builderName := strings.TrimSpace(builderOut.String())
+
 	var cmds []*exec.Cmd
-	cmds = append(cmds, commandVersion()) // docker version
-	cmds = append(cmds, commandInfo())    // docker info
-	cmds = append(cmds, commandBuilder(p.settings.Daemon))
 	cmds = append(cmds, commandBuildx())
 	cmds = append(cmds, commandBuild(p.settings.Build, p.settings.Dryrun)) // docker build
 	if !p.settings.Dryrun && p.settings.Build.Output != "" &&
@@ -395,15 +444,25 @@ func (p *Plugin) Execute() error {
 		cmds = append(cmds, commandsPush(p.settings.Build)...) // docker push
 	}
 
-	// execute all commands in batch mode.
 	for _, cmd := range cmds {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		trace(cmd)
-
-		err := cmd.Run()
-		if err != nil {
+		if err := cmd.Run(); err != nil {
 			return err
+		}
+	}
+
+	// Remove the builder created for this job. The builder is ephemeral — it is
+	// never reused across jobs — so keeping it only wastes disk. purge=false opts
+	// out for the rare case where the caller wants to inspect the builder afterward.
+	if p.settings.Cleanup && builderName != "" {
+		rmCmd := exec.Command(dockerExe, "buildx", "rm", builderName)
+		rmCmd.Stdout = os.Stdout
+		rmCmd.Stderr = os.Stderr
+		trace(rmCmd)
+		if err := rmCmd.Run(); err != nil {
+			logrus.Warnf("failed to remove builder %q: %v", builderName, err)
 		}
 	}
 
