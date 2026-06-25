@@ -1,39 +1,95 @@
 # plugin-docker-buildx
 
-<br/>
-<p align="center">
-<a href="https://ci.codeberg.org/repos/3265" target="_blank">
-  <img src="https://ci.codeberg.org/api/badges/3265/status.svg" alt="status-badge" />
-</a>
-<a href="https://codeberg.org/woodpecker-plugins/docker-buildx/releases" title="Latest release">
-  <img src="https://img.shields.io/gitea/v/release/woodpecker-plugins/docker-buildx?gitea_url=https%3A%2F%2Fcodeberg.org
-" alt="Latest release">
-</a>
-  <a href="https://matrix.to/#/#woodpecker:matrix.org" title="Join the Matrix space at https://matrix.to/#/#woodpecker:matrix.org">
-    <img src="https://img.shields.io/matrix/woodpecker:matrix.org?label=matrix" alt="Matrix space">
-  </a>
-  <a href="https://hub.docker.com/r/woodpeckerci/plugin-docker-buildx" title="Docker pulls">
-    <img src="https://img.shields.io/docker/pulls/woodpeckerci/plugin-docker-buildx" alt="Docker pulls">
-  </a>
-  <a href="https://opensource.org/licenses/Apache-2.0" title="License: Apache-2.0">
-    <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache-2.0">
-  </a>
-</p>
-<br/>
+Woodpecker CI plugin to build multiarch Docker images with [buildx](https://docs.docker.com/buildx/working-with-buildx/).
 
-Woodpecker CI plugin to build multiarch Docker images with [buildx](https://duckduckgo.com/?q=docker+buildx&ia=web).
-This plugin was initially a fork of [thegeeklab/drone-docker-buildx](https://github.com/thegeeklab/drone-docker-buildx/) (now archived in favor of this plugin) which itself was a fork of [drone-plugins/drone-docker](https://github.com/drone-plugins/drone-docker).
-I also contains the ability to publish to AWS ECR which was previously provided by [drone-plugins/drone-ecr](https://github.com/drone-plugins/drone-docker/tree/master/cmd/drone-ecr).
-You can find the full documentation at [woodpecker-ci.org](https://woodpecker-ci.org/plugins/Docker%20Buildx) ([docs.md](./docs.md)).
+This is a fork of [woodpecker-ci/plugin-docker-buildx](https://github.com/woodpecker-ci/plugin-docker-buildx) maintained by GowerStreet.
+See [upstream docs](https://woodpecker-ci.org/plugins/Docker%20Buildx) for the full settings reference.
 
-## Images
+## Why we forked
 
-Images are available on [Dockerhub](https://hub.docker.com/r/woodpeckerci/plugin-docker-buildx) and in the [Codeberg registry](https://codeberg.org/woodpecker-plugins/-/packages/container/docker-buildx/latest).
+The upstream plugin had two issues that caused disk exhaustion on the CI host:
+
+1. **`purge` was a no-op.** The setting was documented and defaulted to `true`, but the `settings.Cleanup` field was never read by `Execute()`. Every job created a new `buildx_buildkit_*` container and a ~4 GB state volume and left both running permanently. On a busy day this accumulated 80–90 GB of orphaned builders.
+
+2. **No BuildKit GC policy.** Even if builders had been cleaned up, their caches had no upper bound. A single builder could grow to fill the disk on long-running pipelines.
+
+## What we changed
+
+### 1. `purge` now works (`purge: true` is the default)
+
+`Execute()` captures the builder name from `docker buildx create --use` output, then runs `docker buildx rm <name>` after the build completes. The builder container and its state volume are removed at the end of every job.
+
+Set `purge: false` only if you need to inspect the builder after a failed build.
+
+### 2. BuildKit GC defaults are always applied
+
+The auto-generated buildkit config now always includes a `[worker.oci]` section:
+
+```toml
+[worker.oci]
+gc = true
+gckeepstorage = 1000        # 1 GB max local cache
+
+[[worker.oci.gcpolicy]]
+keepBytes = 536870912       # evict above 512 MiB
+keepDuration = 7200         # evict layers older than 2 hours
+```
+
+This bounds the local cache footprint of each builder while it is alive, acting as a backstop in case purge ever fails. If you set `buildkit_config` explicitly these defaults are not applied — your config is used as-is.
+
+### 3. Registry cache is enabled by default (`auto_cache: true`)
+
+When `auto_cache` is enabled (the default) and no explicit `cache_from`, `cache_to`, or `cache_images` settings are provided, the plugin automatically derives a registry cache image from the first `repo` value:
+
+```
+repo: gowerstreet/myapp  →  cache image: gowerstreet/myapp:buildcache
+```
+
+This gives every job free layer caching with zero per-pipeline config. The same credentials used to push the image cover the cache tag. The cache is written with `mode=max` so all intermediate layers are stored, making layer-cache hits as effective as possible.
+
+Auto-cache is suppressed when:
+- `dry_run: true` (no push, so no cache write)
+- Any of `cache_from`, `cache_to`, or `cache_images` is set explicitly
+
+Opt out globally with `auto_cache: false`.
+
+## Image
+
+```
+gowerstreet/plugin-docker-buildx:latest
+```
+
+## Minimal example
+
+```yaml
+steps:
+  publish:
+    image: gowerstreet/plugin-docker-buildx
+    settings:
+      repo: gowerstreet/myapp
+      tags: ${CI_COMMIT_SHA}
+      username:
+        from_secret: docker_username
+      password:
+        from_secret: docker_password
+```
+
+This will:
+- Build and push `gowerstreet/myapp:<sha>`
+- Pull cache from `gowerstreet/myapp:buildcache` (first run: miss; subsequent runs: fast)
+- Push updated cache to `gowerstreet/myapp:buildcache`
+- Remove the ephemeral BuildKit builder and its state volume on completion
+
+## Keeping in sync with upstream
+
+```bash
+git remote add upstream https://github.com/woodpecker-ci/plugin-docker-buildx.git
+git fetch upstream
+git merge upstream/main
+```
+
+Our changes are confined to `plugin/impl.go`, `cmd/docker-buildx/config.go`, and `plugin/impl_test.go`, so merges are usually clean.
 
 ## License
 
-This project is licensed under the Apache-2.0 License - see the [LICENSE](https://codeberg.org/woodpecker-plugins/plugin-docker-buildx/src/branch/main/LICENSE) file for details.
-
-## Maintainers
-
-This plugin is maintained by @6543 and @pat-s.
+Apache-2.0 — see [LICENSE](./LICENSE).

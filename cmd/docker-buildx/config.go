@@ -220,6 +220,13 @@ func settingsFlags(settings *plugin.Settings) []cli.Flag {
 			Destination: &settings.Build.CacheImages,
 		},
 		&cli.BoolFlag{
+			Name:        "auto-cache",
+			EnvVars:     []string{"PLUGIN_AUTO_CACHE"},
+			Usage:       "automatically use repo:buildcache as registry cache when no explicit cache settings are provided",
+			Value:       true,
+			Destination: &settings.Build.AutoCache,
+		},
+		&cli.BoolFlag{
 			Name:        "pull-image",
 			EnvVars:     []string{"PLUGIN_PULL_IMAGE"},
 			Usage:       "enforces to pull base image at build time",

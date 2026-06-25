@@ -80,6 +80,38 @@ func TestDefaultLogin(t *testing.T) {
 	}
 }
 
+func TestAutoCache(t *testing.T) {
+	// Auto-cache derives cache image from first repo entry.
+	s := defaultTestSettings
+	s.Build.Repo = *cli.NewStringSlice("gowerstreet/myapp")
+	s.Build.AutoCache = true
+	assert.NoError(t, newSettingsOnly(&s).Validate())
+	assert.EqualValues(t, []string{"gowerstreet/myapp:buildcache"}, s.Build.CacheImages.Value())
+
+	// Explicit cache_images suppresses auto-cache.
+	s = defaultTestSettings
+	s.Build.Repo = *cli.NewStringSlice("gowerstreet/myapp")
+	s.Build.AutoCache = true
+	s.Build.CacheImages = *cli.NewStringSlice("gowerstreet/myapp:custom-cache")
+	assert.NoError(t, newSettingsOnly(&s).Validate())
+	assert.EqualValues(t, []string{"gowerstreet/myapp:custom-cache"}, s.Build.CacheImages.Value())
+
+	// Dry-run suppresses auto-cache (no push, so no cache write).
+	s = defaultTestSettings
+	s.Build.Repo = *cli.NewStringSlice("gowerstreet/myapp")
+	s.Build.AutoCache = true
+	s.Dryrun = true
+	assert.NoError(t, newSettingsOnly(&s).Validate())
+	assert.Empty(t, s.Build.CacheImages.Value())
+
+	// auto_cache=false disables the behaviour.
+	s = defaultTestSettings
+	s.Build.Repo = *cli.NewStringSlice("gowerstreet/myapp")
+	s.Build.AutoCache = false
+	assert.NoError(t, newSettingsOnly(&s).Validate())
+	assert.Empty(t, s.Build.CacheImages.Value())
+}
+
 // defaultGCConfig is the worker GC section always appended to auto-generated buildkit configs.
 const defaultGCConfig = "\n[worker]\n[worker.oci]\ngc = true\ngckeepstorage = 1000\n\n[[worker.oci.gcpolicy]]\nkeepBytes = 536870912\nkeepDuration = 7200\n"
 

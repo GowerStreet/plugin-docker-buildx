@@ -78,6 +78,7 @@ type Build struct {
 	CacheFrom       string          // Docker build cache-from
 	CacheTo         string          // Docker build cache-to
 	CacheImages     cli.StringSlice // Docker build cache images
+	AutoCache       bool            // Automatically derive registry cache from repo setting
 	Compress        bool            // Docker build compress
 	Repo            cli.StringSlice // Docker build repository
 	NoCache         bool            // Docker build no-cache
@@ -216,6 +217,22 @@ func (p *Plugin) Validate() error {
 
 	if p.settings.Build.LabelsAuto {
 		p.settings.Build.Labels = *cli.NewStringSlice(p.Labels()...)
+	}
+
+	// When auto_cache is enabled and no explicit cache settings have been provided,
+	// derive a registry cache image from the first repo value (e.g. "org/app" →
+	// "org/app:buildcache"). This gives every job free layer caching without any
+	// per-pipeline config — the same credentials used to push the image also cover
+	// the cache tag. Disabled automatically for dry-run jobs (no push, no cache write).
+	if p.settings.Build.AutoCache &&
+		!p.settings.Dryrun &&
+		len(p.settings.Build.CacheImages.Value()) == 0 &&
+		p.settings.Build.CacheFrom == "" &&
+		p.settings.Build.CacheTo == "" &&
+		len(p.settings.Build.Repo.Value()) > 0 {
+		cacheImage := p.settings.Build.Repo.Value()[0] + ":buildcache"
+		p.settings.Build.CacheImages = *cli.NewStringSlice(cacheImage)
+		logrus.Printf("auto_cache: using %s as registry cache", cacheImage)
 	}
 
 	if err := p.generateBuildkitConfig(); err != nil {
