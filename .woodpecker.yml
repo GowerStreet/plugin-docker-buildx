@@ -1,22 +1,31 @@
+# Triggers:
+#   - push to main   → runs test-build, then publishes (see the publish step)
+#   - pull_request    → runs test-build only (dry-run, no push)
+#   - manual (UI)     → runs test-build only, on any branch
 when:
   - event: push
     branch: main
-  # Allow triggering this bootstrap by hand from the Woodpecker UI on any branch,
-  # so it can run from the PR branch without merging to main first.
+  - event: pull_request
   - event: manual
 
 steps:
-  # ONE-OFF BOOTSTRAP (temporary; revert after it succeeds).
-  #
-  # The self-hosted `gowerstreet/plugin-docker-buildx:latest` on Docker Hub is an
-  # arm64-only image, so on our amd64 CI host it runs under qemu emulation and its
-  # nested dockerd dies (iptables-nft is unsupported under emulation). That makes it
-  # impossible to build ourselves with ourselves. Break the cycle by building the
-  # image once with the upstream reference plugin (multi-arch, runs natively), which
-  # publishes a correct multi-arch `latest`. After this run lands, restore the
-  # self-hosting pipeline.
-  bootstrap:
-    image: woodpeckerci/plugin-docker-buildx
+  # Dogfood build: compile and run inside our own published image to prove it
+  # actually works — not just that it compiles. dry-run + single-arch means a
+  # real build with no push. Runs on every trigger (push, pull_request, manual).
+  test-build:
+    image: gowerstreet/plugin-docker-buildx
+    privileged: true
+    settings:
+      repo: gowerstreet/plugin-docker-buildx
+      dry-run: true
+      platforms: linux/amd64
+      auto_cache: false
+
+  # Publish multi-arch. Self-hosted: uses the previous `latest` to build and push
+  # the next one, keeping `latest` correct going forward. Only on pushes to main,
+  # and only if test-build succeeded.
+  publish:
+    image: gowerstreet/plugin-docker-buildx
     privileged: true
     settings:
       repo: gowerstreet/plugin-docker-buildx
@@ -30,3 +39,7 @@ steps:
       platforms:
         - linux/amd64
         - linux/arm64
+    when:
+      - event: push
+        branch: main
+        status: success
