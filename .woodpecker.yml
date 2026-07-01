@@ -1,6 +1,9 @@
 when:
   - event: push
     branch: main
+  # Allow triggering this bootstrap by hand from the Woodpecker UI on any branch,
+  # so it can run from the PR branch without merging to main first.
+  - event: manual
 
 steps:
   # ONE-OFF BOOTSTRAP (temporary; revert after it succeeds).
