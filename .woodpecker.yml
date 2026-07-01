@@ -3,25 +3,17 @@ when:
     branch: main
 
 steps:
-  # Build the plugin image using the current production image, loading the result
-  # into the local Docker daemon only (no push to registry). Single-platform
-  # (linux/amd64) is enough here — we just need a runnable image for the next step.
-  # This verifies the code builds cleanly before we publish anything.
-  build-local:
-    image: gowerstreet/plugin-docker-buildx
-    privileged: true
-    settings:
-      repo: gowerstreet/plugin-docker-buildx
-      tags: ci-${CI_PIPELINE_NUMBER}
-      platforms: linux/amd64
-      output: type=docker
-      auto_cache: false
-
-  # Run the freshly built local image as the plugin for the real publish.
-  # This proves the new image works correctly as a plugin — not just that it
-  # compiles — before the versioned tags are applied.
-  publish:
-    image: gowerstreet/plugin-docker-buildx:ci-${CI_PIPELINE_NUMBER}
+  # ONE-OFF BOOTSTRAP (temporary; revert after it succeeds).
+  #
+  # The self-hosted `gowerstreet/plugin-docker-buildx:latest` on Docker Hub is an
+  # arm64-only image, so on our amd64 CI host it runs under qemu emulation and its
+  # nested dockerd dies (iptables-nft is unsupported under emulation). That makes it
+  # impossible to build ourselves with ourselves. Break the cycle by building the
+  # image once with the upstream reference plugin (multi-arch, runs natively), which
+  # publishes a correct multi-arch `latest`. After this run lands, restore the
+  # self-hosting pipeline.
+  bootstrap:
+    image: woodpeckerci/plugin-docker-buildx
     privileged: true
     settings:
       repo: gowerstreet/plugin-docker-buildx
@@ -35,7 +27,3 @@ steps:
       platforms:
         - linux/amd64
         - linux/arm64
-    when:
-      - event: push
-        branch: main
-        status: success
