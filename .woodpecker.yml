@@ -3,10 +3,10 @@ when:
     branch: main
 
 steps:
-  # Build an amd64 staging image using the upstream plugin (woodpeckerci/plugin-docker-buildx
-  # has amd64 support). Pushes to a staging tag so the next step can pull and verify it.
+  # Build an amd64 staging image using our fork. Pushes to a staging tag so the next
+  # step can pull and verify it works correctly as a plugin before promoting to :latest.
   build-staging:
-    image: woodpeckerci/plugin-docker-buildx
+    image: gowerstreet/plugin-docker-buildx
     settings:
       repo: gowerstreet/plugin-docker-buildx
       tags: staging-${CI_PIPELINE_NUMBER}
