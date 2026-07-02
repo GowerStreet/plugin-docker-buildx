@@ -1,32 +1,25 @@
-# Triggers:
-#   - push to main   → runs test-build, then publishes (see the publish step)
-#   - pull_request    → runs test-build only (dry-run, no push)
-#   - manual (UI)     → runs test-build only, on any branch
 when:
   - event: push
     branch: main
-  - event: pull_request
-  - event: manual
 
 steps:
-  # Dogfood build: compile and run inside our own published image to prove it
-  # actually works — not just that it compiles. dry-run + single-arch means a
-  # real build with no push. Runs on every trigger (push, pull_request, manual).
-  test-build:
+  # Build an amd64 staging image using our fork. Pushes to a staging tag so the next
+  # step can pull and verify it works correctly as a plugin before promoting to :latest.
+  build-staging:
     image: gowerstreet/plugin-docker-buildx
-    privileged: true
     settings:
       repo: gowerstreet/plugin-docker-buildx
-      dry-run: true
+      tags: staging-${CI_PIPELINE_NUMBER}
       platforms: linux/amd64
-      auto_cache: false
+      username:
+        from_secret: docker_username
+      password:
+        from_secret: docker_password
 
-  # Publish multi-arch. Self-hosted: uses the previous `latest` to build and push
-  # the next one, keeping `latest` correct going forward. Only on pushes to main,
-  # and only if test-build succeeded.
+  # Use the freshly built staging image as the plugin to publish with final tags.
+  # This verifies the new image functions correctly as a plugin before it becomes :latest.
   publish:
-    image: gowerstreet/plugin-docker-buildx
-    privileged: true
+    image: gowerstreet/plugin-docker-buildx:staging-${CI_PIPELINE_NUMBER}
     settings:
       repo: gowerstreet/plugin-docker-buildx
       username:
