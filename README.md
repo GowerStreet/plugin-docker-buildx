@@ -42,8 +42,11 @@ This bounds the local cache footprint of each builder while it is alive, acting 
 When `auto_cache` is enabled (the default) and no explicit `cache_from`, `cache_to`, or `cache_images` settings are provided, the plugin automatically derives a registry cache image from the first `repo` value:
 
 ```
-repo: gowerstreet/myapp  →  cache image: gowerstreet/myapp:buildcache
+repo: gowerstreet/myapp               →  cache image: gowerstreet/myapp:buildcache
+repo: gowerstreet/myapp, target: web  →  cache image: gowerstreet/myapp:buildcache-web
 ```
+
+Each `target` gets its own ref. With `mode=max` a ref holds one build's cache, so targets sharing a ref would overwrite each other.
 
 This gives every job free layer caching with zero per-pipeline config. The same credentials used to push the image cover the cache tag. The cache is written with `mode=max` so all intermediate layers are stored, making layer-cache hits as effective as possible.
 
@@ -52,6 +55,16 @@ Auto-cache is suppressed when:
 - Any of `cache_from`, `cache_to`, or `cache_images` is set explicitly
 
 Opt out globally with `auto_cache: false`.
+
+### 4. No `SOURCE_DATE_EPOCH` or `rewrite-timestamp` by default (`reproducible: false`)
+
+Upstream always passes `--build-arg SOURCE_DATE_EPOCH=<commit time>` and `--output ...,rewrite-timestamp=true`. BuildKit folds `SOURCE_DATE_EPOCH` into the cache key of every layer, so every new commit missed the registry cache from the first `WORKDIR`/`RUN` on and `auto_cache` never hit. `rewrite-timestamp` then pulls and rewrites every layer, cached or not (116s on a 1 GB image in GowerStreet/dagster).
+
+Both are now only applied with `reproducible: true`. For GowerStreet/dagster, turning them off cut the full-image step from 493s to 206s and the web/daemon steps from ~320s to 129s.
+
+### 5. Startup timing in the log
+
+The step log prints how long the inner docker daemon took to come up and how long registry login took.
 
 ## Image
 

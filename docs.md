@@ -134,6 +134,7 @@ docker-build:
 | `no_cache`                         | `false`           | disables the usage of cached intermediate containers                                                                                                 |
 | `add_host`                         | _none_            | sets additional host:ip mapping                                                                                                                      |
 | `output`                           | _none_            | sets build output in format`type=<type>[,<key>=<value>]`                                                                                             |
+| `reproducible`                     | `false`           | sets `SOURCE_DATE_EPOCH` to the commit time and adds `rewrite-timestamp=true`. Changes every layer's cache key on each commit, so no layer is reused |
 | `logins`                           | _none_            | option to log into multiple registries                                                                                                               |
 | `env_file`                         | _none_            | load env vars from specified file                                                                                                                    |
 | `ecr_create_repository`            | `false`           | creates the ECR repository if it does not exist                                                                                                      |

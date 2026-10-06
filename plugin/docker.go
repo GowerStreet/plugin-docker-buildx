@@ -65,22 +65,22 @@ func commandBuild(build Build, dryrun bool) *exec.Cmd {
 
 	var defaultBuildArgs []string
 
-	if isGitRepository() {
-		// determine git epoch to define SOURCE_DATE_EPOCH build_arg
-		r, _ := git.PlainOpen(".")
-		ref, _ := r.Head()
-		iter, _ := r.Log(&git.LogOptions{From: ref.Hash()})
-		commit, _ := iter.Next()
-		build.Epoch = commit.Author.When.Unix()
+	defaultBuildArgs = []string{
+		fmt.Sprintf("DOCKER_IMAGE_CREATED=%s", time.Now().Format(time.RFC3339)),
+	}
 
-		defaultBuildArgs = []string{
-			fmt.Sprintf("DOCKER_IMAGE_CREATED=%s", time.Now().Format(time.RFC3339)),
-			fmt.Sprintf("SOURCE_DATE_EPOCH=%s", strconv.FormatInt(build.Epoch, 10)),
-		}
-	} else {
-		fmt.Println("INFO: no git repository detected, not setting SOURCE_DATE_EPOCH")
-		defaultBuildArgs = []string{
-			fmt.Sprintf("DOCKER_IMAGE_CREATED=%s", time.Now().Format(time.RFC3339)),
+	// BuildKit folds SOURCE_DATE_EPOCH into every layer's cache key, so a
+	// per-commit value means no layer is ever reused. Opt-in only.
+	if build.Reproducible {
+		if isGitRepository() {
+			r, _ := git.PlainOpen(".")
+			ref, _ := r.Head()
+			iter, _ := r.Log(&git.LogOptions{From: ref.Hash()})
+			commit, _ := iter.Next()
+			build.Epoch = commit.Author.When.Unix()
+			defaultBuildArgs = append(defaultBuildArgs, fmt.Sprintf("SOURCE_DATE_EPOCH=%s", strconv.FormatInt(build.Epoch, 10)))
+		} else {
+			fmt.Println("INFO: no git repository detected, not setting SOURCE_DATE_EPOCH")
 		}
 	}
 
@@ -121,10 +121,16 @@ func commandBuild(build Build, dryrun bool) *exec.Cmd {
 	}
 	if build.Output != "" {
 		args = append(args, "--output", build.Output)
-	} else if dryrun {
-		args = append(args, "--output", "type=image,rewrite-timestamp=true")
 	} else {
-		args = append(args, "--output", "type=image,push=true,rewrite-timestamp=true")
+		output := "type=image"
+		if !dryrun {
+			output += ",push=true"
+		}
+		// rewrite-timestamp re-pulls and rewrites every layer, cached or not.
+		if build.Reproducible {
+			output += ",rewrite-timestamp=true"
+		}
+		args = append(args, "--output", output)
 	}
 	if build.Quiet {
 		args = append(args, "--quiet")

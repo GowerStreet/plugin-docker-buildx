@@ -3,6 +3,7 @@ package plugin
 import (
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -66,4 +67,26 @@ func TestCommandBuilder(t *testing.T) {
 			assert.Len(t, test.Daemon.BuildkitDriverOpt.Value(), test.WantedLen)
 		})
 	}
+}
+
+func TestCommandBuildCacheKeyInputs(t *testing.T) {
+	build := Build{Dockerfile: "Dockerfile", Context: "."}
+
+	args := strings.Join(commandBuild(build, false).Args, " ")
+	assert.NotContains(t, args, "SOURCE_DATE_EPOCH")
+	assert.Contains(t, args, "--output type=image,push=true")
+	assert.NotContains(t, args, "rewrite-timestamp")
+
+	args = strings.Join(commandBuild(build, true).Args, " ")
+	assert.Contains(t, args, "--output type=image")
+	assert.NotContains(t, args, "push=true")
+
+	build.Reproducible = true
+	args = strings.Join(commandBuild(build, false).Args, " ")
+	assert.Contains(t, args, "--output type=image,push=true,rewrite-timestamp=true")
+}
+
+func TestAutoCacheImage(t *testing.T) {
+	assert.Equal(t, "org/app:buildcache", autoCacheImage("org/app", ""))
+	assert.Equal(t, "org/app:buildcache-web", autoCacheImage("org/app", "web"))
 }

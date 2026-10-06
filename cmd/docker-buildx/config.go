@@ -220,9 +220,15 @@ func settingsFlags(settings *plugin.Settings) []cli.Flag {
 			Destination: &settings.Build.CacheImages,
 		},
 		&cli.BoolFlag{
+			Name:        "reproducible",
+			EnvVars:     []string{"PLUGIN_REPRODUCIBLE"},
+			Usage:       "pin SOURCE_DATE_EPOCH to the commit time and rewrite layer timestamps; changes every layer's cache key on each commit, so it defeats the layer cache",
+			Destination: &settings.Build.Reproducible,
+		},
+		&cli.BoolFlag{
 			Name:        "auto-cache",
 			EnvVars:     []string{"PLUGIN_AUTO_CACHE"},
-			Usage:       "automatically use repo:buildcache as registry cache when no explicit cache settings are provided",
+			Usage:       "automatically use repo:buildcache (repo:buildcache-<target> with a target) as registry cache when no explicit cache settings are provided",
 			Value:       true,
 			Destination: &settings.Build.AutoCache,
 		},
