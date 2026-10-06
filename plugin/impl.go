@@ -79,6 +79,7 @@ type Build struct {
 	CacheTo         string          // Docker build cache-to
 	CacheImages     cli.StringSlice // Docker build cache images
 	AutoCache       bool            // Automatically derive registry cache from repo setting
+	Reproducible    bool            // Pin SOURCE_DATE_EPOCH to the commit time and rewrite layer timestamps
 	Compress        bool            // Docker build compress
 	Repo            cli.StringSlice // Docker build repository
 	NoCache         bool            // Docker build no-cache
@@ -230,7 +231,7 @@ func (p *Plugin) Validate() error {
 		p.settings.Build.CacheFrom == "" &&
 		p.settings.Build.CacheTo == "" &&
 		len(p.settings.Build.Repo.Value()) > 0 {
-		cacheImage := p.settings.Build.Repo.Value()[0] + ":buildcache"
+		cacheImage := autoCacheImage(p.settings.Build.Repo.Value()[0], p.settings.Build.Target)
 		p.settings.Build.CacheImages = *cli.NewStringSlice(cacheImage)
 		logrus.Printf("auto_cache: using %s as registry cache", cacheImage)
 	}
@@ -240,6 +241,16 @@ func (p *Plugin) Validate() error {
 	}
 
 	return nil
+}
+
+// autoCacheImage names the registry cache for a repo. Each target gets its own
+// ref: with mode=max a cache ref holds one build's records, so targets sharing a
+// ref overwrite each other's cache.
+func autoCacheImage(repo, target string) string {
+	if target == "" {
+		return repo + ":buildcache"
+	}
+	return repo + ":buildcache-" + target
 }
 
 func (p *Plugin) sanitizedUserTags() []string {
@@ -391,13 +402,21 @@ func (p *Plugin) Execute() error {
 
 	// poll the docker daemon until it is started. This ensures the daemon is
 	// ready to accept connections before we proceed.
+	start := time.Now()
+	ready := false
 	for i := 0; i < 15; i++ {
 		cmd := commandInfo()
 		err := cmd.Run()
 		if err == nil {
+			ready = true
 			break
 		}
 		time.Sleep(time.Second * 1)
+	}
+	if ready {
+		logrus.Printf("docker daemon ready after %s", time.Since(start).Round(time.Second))
+	} else {
+		logrus.Warnf("docker daemon not ready after %s", time.Since(start).Round(time.Second))
 	}
 
 	// Create Auth Config File
@@ -412,9 +431,11 @@ func (p *Plugin) Execute() error {
 	}
 
 	// login to the Docker registry
+	loginStart := time.Now()
 	if err := p.Login(); err != nil {
 		return err
 	}
+	logrus.Printf("registry login took %s", time.Since(loginStart).Round(time.Second))
 
 	if err := p.writeBuildkitConfig(); err != nil {
 		return err
