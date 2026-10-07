@@ -144,3 +144,12 @@ func TestWriteBuildkitConfig(t *testing.T) {
 	assert.NoError(t, newSettingsOnly(&settings).Validate())
 	assert.EqualValues(t, fmt.Sprintf("[registry]\n[registry.'codeberg.org']\nca = ['%s/codeberg.org/ca.crt']\n"+defaultGCConfig, tmpDir), settings.Daemon.BuildkitConfig)
 }
+
+func TestWritesAutoCache(t *testing.T) {
+	assert.True(t, writesAutoCache("", "", ""))
+	assert.True(t, writesAutoCache("push", "main", "main"))
+	assert.True(t, writesAutoCache("manual", "main", "main"))
+	assert.False(t, writesAutoCache("push", "feature", "main"))
+	assert.False(t, writesAutoCache("pull_request", "main", "main"))
+	assert.False(t, writesAutoCache("pull_request_metadata", "main", "main"))
+}
