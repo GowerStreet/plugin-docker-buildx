@@ -50,6 +50,8 @@ Each `target` gets its own ref. With `mode=max` a ref holds one build's cache, s
 
 This gives every job free layer caching with zero per-pipeline config. The same credentials used to push the image cover the cache tag. The cache is written with `mode=max` so all intermediate layers are stored, making layer-cache hits as effective as possible.
 
+Only pushes to the repo's default branch write the cache. Pull requests and other branches read it but never write it: a `mode=max` ref holds one build's cache, so a PR building a different Dockerfile, lockfile or build args would otherwise evict the default branch's cache for every later build (seen in GowerStreet/dagster on 2026-10-07: PR and main builds alternately overwrote `buildcache-full` and every build ran cold).
+
 Auto-cache is suppressed when:
 - `dry_run: true` (no push, so no cache write)
 - Any of `cache_from`, `cache_to`, or `cache_images` is set explicitly

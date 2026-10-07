@@ -232,8 +232,13 @@ func (p *Plugin) Validate() error {
 		p.settings.Build.CacheTo == "" &&
 		len(p.settings.Build.Repo.Value()) > 0 {
 		cacheImage := autoCacheImage(p.settings.Build.Repo.Value()[0], p.settings.Build.Target)
-		p.settings.Build.CacheImages = *cli.NewStringSlice(cacheImage)
-		logrus.Printf("auto_cache: using %s as registry cache", cacheImage)
+		if writesAutoCache(os.Getenv("CI_PIPELINE_EVENT"), os.Getenv("CI_COMMIT_BRANCH"), os.Getenv("CI_REPO_DEFAULT_BRANCH")) {
+			p.settings.Build.CacheImages = *cli.NewStringSlice(cacheImage)
+			logrus.Printf("auto_cache: using %s as registry cache", cacheImage)
+		} else {
+			p.settings.Build.CacheFrom = cacheImage
+			logrus.Printf("auto_cache: reading %s as registry cache (written only by default-branch pushes)", cacheImage)
+		}
 	}
 
 	if err := p.generateBuildkitConfig(); err != nil {
@@ -251,6 +256,21 @@ func autoCacheImage(repo, target string) string {
 		return repo + ":buildcache"
 	}
 	return repo + ":buildcache-" + target
+}
+
+// writesAutoCache reports whether this pipeline may overwrite the auto cache.
+// A mode=max cache ref holds one build's records, so a PR building a different
+// Dockerfile or lockfile would evict the default branch's cache for everyone.
+// PRs and other branches read it but never write it. Outside Woodpecker (no
+// event set) it keeps writing.
+func writesAutoCache(event, branch, defaultBranch string) bool {
+	if event == "" {
+		return true
+	}
+	if strings.HasPrefix(event, "pull_request") {
+		return false
+	}
+	return defaultBranch == "" || branch == defaultBranch
 }
 
 func (p *Plugin) sanitizedUserTags() []string {
